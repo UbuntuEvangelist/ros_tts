@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(tts)
+project(ros_tts)
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
@@ -17,7 +17,7 @@ find_package(catkin REQUIRED COMPONENTS
 ## Uncomment this if the package has a setup.py. This macro ensures
 ## modules and global scripts declared therein get installed
 ## See http://ros.org/doc/api/catkin/html/user_guide/setup_dot_py.html
-catkin_python_setup()
+#catkin_python_setup()
 
 ################################################
 ## Declare ROS messages, services and actions ##
@@ -84,7 +84,7 @@ generate_dynamic_reconfigure_options(
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
 #  INCLUDE_DIRS include
-#  LIBRARIES tts
+#  LIBRARIES ros_tts
 #  CATKIN_DEPENDS other_catkin_pkg
 #  DEPENDS system_lib
 )
@@ -98,19 +98,19 @@ catkin_package(
 # include_directories(include)
 
 ## Declare a cpp library
-# add_library(tts
-#   src/${PROJECT_NAME}/tts.cpp
+# add_library(ros_tts
+#   src/${PROJECT_NAME}/ros_tts.cpp
 # )
 
 ## Declare a cpp executable
-# add_executable(tts_node src/tts_node.cpp)
+# add_executable(ros_tts_node src/ros_tts_node.cpp)
 
 ## Add cmake target dependencies of the executable/library
 ## as an example, message headers may need to be generated before nodes
-# add_dependencies(tts_node tts_generate_messages_cpp)
+# add_dependencies(ros_tts_node ros_tts_generate_messages_cpp)
 
 ## Specify libraries to link a library or executable target against
-# target_link_libraries(tts_node
+# target_link_libraries(ros_tts_node
 #   ${catkin_LIBRARIES}
 # )
 
@@ -143,7 +143,7 @@ install(PROGRAMS
 )
 
 ## Mark executables and/or libraries for installation
-# install(TARGETS tts tts_node
+# install(TARGETS ros_tts ros_tts_node
 #   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
 #   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
 #   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
@@ -168,7 +168,7 @@ install(PROGRAMS
 #############
 
 ## Add gtest based cpp test target and link libraries
-# catkin_add_gtest(${PROJECT_NAME}-test test/test_tts.cpp)
+# catkin_add_gtest(${PROJECT_NAME}-test test/test_ros_tts.cpp)
 # if(TARGET ${PROJECT_NAME}-test)
 #   target_link_libraries(${PROJECT_NAME}-test ${PROJECT_NAME})
 # endif()

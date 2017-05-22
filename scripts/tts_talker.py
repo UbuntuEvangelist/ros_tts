@@ -1,51 +1,76 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import os
+import sys
 import rospy
 import time
+import re
 import logging
-import os
 import random
 import threading
+from Queue import Queue
 
-from dynamic_reconfigure.server import Server
+from basic_head_api.msg import MakeFaceExpr
+from blender_api_msgs.msg import Viseme, SetGesture, EmotionState
 from std_msgs.msg import String
-from blender_api_msgs.msg import Viseme
-from common.visemes import BaseVisemes
-from common.sound_file import SoundFile
-from tts.ttsapi import get_api
-from tts.srv import *
-from tts.cfg import TTSConfig
+from topic_tools.srv import MuxSelect
+from dynamic_reconfigure.server import Server
+
+from ttsserver.sound_file import SoundFile
+from ttsserver.visemes import BaseVisemes
+from ttsserver.client import Client
+from ros_tts.srv import *
+from ros_tts.cfg import TTSConfig
 
 logger = logging.getLogger('hr.tts.tts_talker')
 
-class TTSTalker:
-    def __init__(self):
-        topic = rospy.get_param('~topic_name', 'chatbot_responses')
-        tts_control = rospy.get_param('tts_control', 'tts_control')
-        rospy.Subscriber(topic, String, self.say)
-        rospy.Subscriber(topic+'_en', String, self.say, 'en')
-        self.speech_active = rospy.Publisher('speech_events', String, queue_size=10)
-        self.vis_topic = rospy.Publisher('/blender_api/queue_viseme', Viseme, queue_size=0)
-        self.blink_publisher = rospy.Publisher('chatbot_blink', String, queue_size=1)
-        self.sound = SoundFile()
-        self.tts_data = None
-        self.interrupt = False
-        self.enable = True
-        rospy.Subscriber(tts_control, String, self.tts_control)
-        rospy.Service('tts_length', TTSLength, self.tts_length)
+class FestivalTTSVisemes(BaseVisemes):
+    default_visemes_map = {
+        'A-I': ['aa','ae','ah','ao','ax','axr','ih','iy'],
+        'E': ['ay','eh','ey'],
+        'O': ['aw','ow','oy'],
+        'U': ['uh','uw'],
+        'C-D-G-K-N-S-TH': ['ch','dh','dx','g','h','jh','k','s','sh','th','y','z','zh','hh'],
+        'F-V': ['f','hv', 'v'],
+        'L': ['d','el','er','l','r','t'],
+        'M': ['b','em','en','m','n','nx','ng','p'],
+        'Q-W': ['w'],
+        'Sil': ['pau', 'brth']
+    }
 
-    def _get_tts_api_config(self):
-        return rospy.get_param('tts_api_config', {'en': 'festival'})
+class TTSTalker:
+
+    LANGUAGES = ['en']
+
+    def __init__(self):
+        self.client = Client()
+        self.executor = TTSExecutor()
+
+        self.voices = {}
+        self.voices['en'] = 'festival:cmu_us_slt_arctic_hts'
+
+        self.service = rospy.Service('tts_length', TTSLength, self.tts_length)
+
+        tts_topic = rospy.get_param('tts_topic', 'chatbot_responses')
+        rospy.Subscriber(tts_topic, String, self.say)
+        rospy.Subscriber(tts_topic+"_en", String, self.say, 'en')
 
     def tts_length(self, req):
+        text = req.txt
+        lang = req.lang
+        try:
+            if lang in self.LANGUAGES:
+                vendor, voice = self.voices[lang].split(':')
+                response = self.client.tts(text, vendor=vendor, voice=voice)
+                duration = response.get_duration()
+                if duration:
+                    return TTSLengthResponse(duration)
+            else:
+                logger.error("Unknown language {}".format(lang))
+        except Exception as ex:
+            logger.error(ex)
         return TTSLengthResponse(1)
-
-    def tts_control(self, msg):
-        if msg.data == 'shutup':
-            logger.info("Shut up!!")
-            self.sound.interrupt()
-            self.interrupt = True
 
     def say(self, msg, lang=None):
         if not self.enable:
@@ -57,76 +82,278 @@ class TTSTalker:
             if lang is None:
                 logger.error("Language is not set")
                 return
-        text = msg.data
-        self.interrupt = False
-        self.startLipSync()
-        self._say(text, lang)
-        self.stopLipSync()
+        if lang == 'en':
+            self._say(msg.data, lang)
+
         logger.info("Finished tts")
+
+    def text_preprocess(self, text):
+        return text
 
     def _say(self, text, lang):
         logger.info('Say "{}" in {}'.format(text, lang))
-        self.tts_data = None
-        tts_api_config = self._get_tts_api_config()
-        api_name = tts_api_config.get(lang, None)
-        api = get_api(api_name)
-        if api is None:
-            logger.error("No TTS API")
-            return
-        self.tts_data = api.tts(text)
-        if self.tts_data and hasattr(self.tts_data, "visemes"):
-            self.doLipSync()
+        try:
+            text = text.strip().strip(".?!")
+            if lang == 'en':
+                text = self.text_preprocess(text)
+            vendor, voice = self.voices[lang].split(':')
+            response = self.client.tts(text, vendor=vendor, voice=voice)
+            self.executor.execute(response)
+        except Exception as ex:
+            import traceback
+            logger.error('TTS error: {}'.format(traceback.format_exc()))
 
-    def startLipSync(self):
+    def reconfig(self, config, level):
+        self.enable = config.enable
+        self.executor.lipsync_enabled = config.lipsync_enabled
+        self.executor.lipsync_blender = config.lipsync_blender
+        self.executor.enable_execute_marker(config.execute_marker)
+        return config
+
+class TTSExecutor(object):
+
+    def __init__(self):
+        self._locker = threading.RLock()
+        self.interrupt = threading.Event()
+        self.sound = SoundFile()
+
+        self.viseme_configs = {}
+        self.viseme_configs['festival'] = FestivalTTSVisemes()
+
+        self.lipsync_enabled = rospy.get_param('lipsync', True)
+        self.lipsync_blender = rospy.get_param('lipsync_blender', True)
+
+        tts_control = rospy.get_param('tts_control', 'tts_control')
+        rospy.Subscriber(tts_control, String, self.tts_control)
+        self.speech_active = rospy.Publisher('speech_events', String, queue_size=10)
+        self.expr_topic = rospy.Publisher('make_face_expr', MakeFaceExpr, queue_size=0)
+        self.vis_topic = rospy.Publisher('/blender_api/queue_viseme', Viseme, queue_size=0)
+        self.mux = rospy.ServiceProxy('lips_pau_select', MuxSelect)
+        self.blink_publisher = rospy.Publisher('chatbot_blink',String,queue_size=1)
+
+        self.animation_queue = Queue()
+        self.animation_runner = AnimationRunner(self.animation_queue)
+        self.animation_runner.start()
+
+    def enable_execute_marker(self, enable):
+        self.animation_runner.enable_execute_marker(enable)
+
+    def tts_control(self, msg):
+        if msg.data == 'shutup':
+            logger.info("Shut up!!")
+            self.interrupt.set()
+
+    def _startLipSync(self):
         self.speech_active.publish("start")
+        if self.lipsync_enabled and not self.lipsync_blender:
+            try:
+                self.mux("lipsync_pau")
+            except Exception as ex:
+                logger.error(ex)
 
-    def stopLipSync(self):
+    def _stopLipSync(self):
         self.speech_active.publish("stop")
+        if self.lipsync_enabled and not self.lipsync_blender:
+            try:
+                self.mux("head_pau")
+            except Exception as ex:
+                logger.error(ex)
 
-    def doLipSync(self):
-        threading.Timer(0, self.sound.play, (self.tts_data.wavout,)).start()
+    def _threadsafe(f):
+        def wrap(self, *args, **kwargs):
+            self._locker.acquire()
+            try:
+                return f(self, *args, **kwargs)
+            finally:
+                self._locker.release()
+        return wrap
 
-        visemes = self.tts_data.visemes
+    @_threadsafe
+    def execute(self, response):
+        self.interrupt.clear()
+        wavfile = os.path.expanduser('~/.hr/tts/tmp.wav')
+        success = response.write(wavfile)
+        if not success:
+            logger.error("No sound file")
+            return
+
+        vendor = response.params.get('vendor')
+        if vendor not in self.viseme_configs:
+            logger.error("No such viseme configs for vendor {}".format(vendor))
+            return
+
+        viseme_config = self.viseme_configs[vendor]
+
+        threading.Timer(0, self.sound.play, (wavfile,)).start()
+
+        duration = response.get_duration()
+        self._startLipSync()
+        self.speech_active.publish("duration:%f" % duration)
+
+        phonemes = response.response['phonemes']
+        markers = response.response['markers']
+        words = response.response['words']
+        visemes = viseme_config.get_visemes(phonemes)
+
+        typeorder = {'marker': 1, 'word': 2, 'viseme': 3}
+        nodes = markers+words+visemes
+        nodes = sorted(nodes, key=lambda x: (x['start'], typeorder[x['type']]))
+
         start = time.time()
-        i = 0
-        while i < len(visemes) and not self.interrupt:
-            if time.time() > start+visemes[i]['start']:
-                logger.debug('{} viseme {}'.format(i, visemes[i]))
-                self.sendVisime(visemes[i])
-                # blink at next to last syllable with probability .7
-                if i == (len(visemes)-2):
-                    if random.random() < 0.7:
-                        self.blink_publisher.publish(String('tts_end'))
-                i += 1
-            time.sleep(0.001)
-        self.sendVisime({'name': 'Sil'})
+        end = start + duration + 1
+        stopat = 0
 
-        elapsed_time = 0
-        timeout = 0.5
-        while self.sound.is_playing and elapsed_time < timeout and not self.interrupt:
-            time.sleep(0.05)
-            elapsed_time += 0.05
-        logger.info('elapsed time {}'.format(elapsed_time))
+        for i, node in enumerate(nodes):
+            while time.time() < end and time.time() < start+node['start']:
+                time.sleep(0.001)
+            if self.interrupt.is_set():
+                logger.info("Interrupt is set")
+                if node['type'] != 'phoneme':
+                    # we still want to play the remaining phonemes
+                    # until it meets 'word' or 'marker'
+                    logger.info("Interrupt at {}".format(node))
+                    break
+            if node['type'] == 'marker':
+                logger.info("marker {}".format(node))
+                if node['name'].startswith('cp'):
+                    continue
+                self.animation_queue.put(node)
+            elif node['type'] == 'word':
+                logger.info("word {}".format(node))
+                continue
+            elif node['type'] == 'viseme':
+                logger.info("viseme {}".format(node))
+                self.sendVisime(node)
+
+        elapsed = time.time() - start
+        supposed = nodes[-1]['end']
+        logger.info("Elapsed {}, nodes duration {}".format(elapsed, supposed))
+
+        if self.interrupt.is_set():
+            self.interrupt.clear()
+            self.sound.interrupt()
+            logger.info("Interrupt flag is cleared")
+
+        self.sendVisime({'name': 'Sil'})
+        self._stopLipSync()
 
     def sendVisime(self, visime):
-        if visime['name'] != 'Sil':
+        if self.lipsync_enabled and self.lipsync_blender and (visime['name'] != 'Sil'):
+            #Need to have global shapekey_store class.
             msg = Viseme()
-            msg.duration.nsecs = visime['duration']*1000000000*BaseVisemes.visemes_param[visime['name']]['duration']
+            # Duration should be overlapping
+            duration = visime['duration']
+            msg.duration.nsecs = duration*1e9*BaseVisemes.visemes_param[visime['name']]['duration']
             msg.name = visime['name']
             msg.magnitude = BaseVisemes.visemes_param[visime['name']]['magnitude']
             msg.rampin = BaseVisemes.visemes_param[visime['name']]['rampin']
             msg.rampout = BaseVisemes.visemes_param[visime['name']]['rampout']
             self.vis_topic.publish(msg)
-        else:
-            # Send silence viseme: Using M instead
-            msg = Viseme()
-            msg.duration.nsecs = 100000000
-            msg.name = 'M'
-            self.vis_topic.publish(msg)
+        if self.lipsync_enabled and not self.lipsync_blender:
+            msg = MakeFaceExpr()
+            msg.exprname = 'vis_'+visime['name']
+            msg.intensity = 1.0
+            self.expr_topic.publish(msg)
 
-    def reconfig(self, config, level):
-        self.enable = config.enable
-        return config
+class AnimationRunner(threading.Thread):
+
+    def __init__(self, queue):
+        super(AnimationRunner, self).__init__()
+        self.gesture_topic = rospy.Publisher(
+            '/blender_api/set_gesture', SetGesture, queue_size=1)
+        self.emotion_topic = rospy.Publisher(
+            '/blender_api/set_emotion_state', EmotionState, queue_size=1)
+        self.queue = queue
+        self.daemon = True
+        logger.info("Init Animation Runner")
+        self.tts_animation_config = rospy.get_param('tts_animation_config', {})
+        self.enable = True
+
+    def enable_execute_marker(self, enable):
+        self.enable = enable
+
+    def run(self):
+        while True:
+            try:
+                node = self.queue.get()
+                if not self.enable:
+                    logger.info("Animation runner is not enabled")
+                    continue
+                logger.info("Get node {}".format(node))
+                name = node['name']
+                if isinstance(name, unicode):
+                    name = name.encode('utf8')
+                name = name.lower()
+                if ',' in name:
+                    name, arg = name.split(',', 1)
+                else:
+                    arg = ''
+                if name in self.tts_animation_config:
+                    animation_type, animation_name = self.tts_animation_config[name].split(':')
+                    if arg:
+                        animation_name = ','.join([animation_name, arg])
+                else:
+                    logger.error("{} is not configured".format(name))
+                    continue
+                if animation_type == 'gesture':
+                    node['animation'] = animation_name
+                    gesture = self.get_gesture(node)
+                    self.sendGesture(gesture)
+                elif animation_type == 'emotion':
+                    node['animation'] = animation_name
+                    logger.error(node)
+                    emotion = self.get_emotion(node)
+                    self.sendEmotion(emotion)
+                else:
+                    logger.warn("Unrecognized node {}".format(node))
+            except Exception as ex:
+                import traceback
+                logger.error(ex)
+                logger.error(traceback.format_exc())
+
+    def get_gesture(self, node):
+        gesture = {}
+        gesture['start'] = node['start']
+        gesture['end'] = node['end']
+        gesture['name'] = node['animation'].strip(',')
+        return gesture
+
+    def sendGesture(self, gesture):
+        msg = SetGesture()
+        args = gesture['name'].split(',', 2)
+        logger.info(args)
+        msg.speed = 1
+        msg.magnitude = 1
+        if len(args) >= 1:
+            msg.name = str(args[0])
+        if len(args) >= 2:
+            msg.speed = float(args[1])
+        if len(args) >= 3:
+            msg.magnitude = float(args[2])
+        logger.info("Send gesture {}".format(msg))
+        self.gesture_topic.publish(msg)
+
+    def get_emotion(self, node):
+        emotion = {}
+        emotion['name'] = node['animation'].strip(',')
+        emotion['start'] = node['start']
+        emotion['end'] = node['end']
+        return emotion
+
+    def sendEmotion(self, emotion):
+        msg = EmotionState()
+        args = emotion['name'].split(',', 2)
+        logger.info(args)
+        msg.magnitude = 1
+        msg.duration.secs = 1
+        if len(args) >= 1:
+            msg.name = str(args[0])
+        if len(args) >= 2:
+            msg.magnitude = float(args[1])
+        if len(args) >= 3:
+            msg.duration.secs = float(args[2])
+        logger.info("Send emotion {}".format(msg))
+        self.emotion_topic.publish(msg)
 
 if __name__ == '__main__':
     rospy.init_node('tts_talker')

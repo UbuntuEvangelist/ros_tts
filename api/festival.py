@@ -36,7 +36,7 @@ class FestivalTTS(TTSBase):
                     continue
                 tick, vol, phoneme  = line.strip().split(' ')
                 tick = float(tick)
-                phonemes.append({'name': phoneme, 'start': last_tick, 'end': tick})
+                phonemes.append({'type': 'phoneme', 'name': phoneme, 'start': last_tick, 'end': tick})
                 last_tick = tick
         return phonemes
 
