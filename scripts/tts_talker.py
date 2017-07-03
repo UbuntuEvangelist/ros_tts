@@ -17,11 +17,11 @@ from std_msgs.msg import String
 from topic_tools.srv import MuxSelect
 from dynamic_reconfigure.server import Server
 
-from tts.sound_file import SoundFile
-from tts.visemes import BaseVisemes, English_Visemes, Pinyin_Viseme, German_Visemes
-from tts.srv import *
-from tts.cfg import TTSConfig
-from tts.client import Client
+from ttsserver.sound_file import SoundFile
+from ttsserver.visemes import BaseVisemes
+from ttsserver.client import Client
+from ros_tts.srv import *
+from ros_tts.cfg import TTSConfig
 
 logger = logging.getLogger('hr.tts.tts_talker')
 
@@ -113,6 +113,7 @@ class TTSTalker:
             if lang == 'en':
                 text = self.text_preprocess(text)
             vendor, voice = self.voices[lang].split(':')
+            logger.info("Lang {}, vendor {}, voice {}".format(lang, vendor, voice))
             response = self.client.tts(text, vendor=vendor, voice=voice)
             self.executor.execute(response)
         except Exception as ex:
@@ -132,11 +133,6 @@ class TTSExecutor(object):
         self._locker = threading.RLock()
         self.interrupt = threading.Event()
         self.sound = SoundFile()
-
-        self.viseme_configs = {}
-        self.viseme_configs['cereproc'] = English_Visemes()
-        self.viseme_configs['iflytek'] = Pinyin_Viseme()
-        self.viseme_configs['cereproc:alex'] = German_Visemes()
 
         self.lipsync_enabled = rospy.get_param('lipsync', True)
         self.lipsync_blender = rospy.get_param('lipsync_blender', True)
@@ -195,17 +191,6 @@ class TTSExecutor(object):
             logger.error("No sound file")
             return
 
-        vendor = response.params.get('vendor')
-        voice = response.params.get('voice')
-        if '{}:{}'.format(vendor, voice) in self.viseme_configs:
-            viseme_config = self.viseme_configs['{}:{}'.format(vendor, voice)]
-        else:
-            if vendor in self.viseme_configs:
-                viseme_config = self.viseme_configs[vendor]
-            else:
-                logger.error("No viseme configs for voice {}:{}".format(vendor, voice))
-                return
-
         threading.Timer(0.1, self.sound.play, (wavfile,)).start()
 
         duration = response.get_duration()
@@ -215,7 +200,7 @@ class TTSExecutor(object):
         phonemes = response.response['phonemes']
         markers = response.response['markers']
         words = response.response['words']
-        visemes = viseme_config.get_visemes(phonemes)
+        visemes = response.response['visemes']
 
         typeorder = {'marker': 1, 'word': 2, 'viseme': 3}
         nodes = markers+words+visemes
