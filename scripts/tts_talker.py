@@ -29,6 +29,8 @@ class TTSTalker:
     def __init__(self):
         self.client = Client()
         self.executor = TTSExecutor()
+        self.emo_enabled = False
+        self.emotion = None
 
         self.voices = {}
         self.voices['en'] = rospy.get_param('voice_en', None)
@@ -51,7 +53,7 @@ class TTSTalker:
         try:
             if lang in ['en', 'zh']:
                 vendor, voice = self.voices[lang].split(':')
-                response = self.client.tts(text, vendor=vendor, voice=voice)
+                response = self.client.tts(text, vendor=vendor, voice=voice, emotion=self.emotion)
                 duration = response.get_duration()
                 if duration:
                     return TTSLengthResponse(duration)
@@ -114,7 +116,7 @@ class TTSTalker:
                 text = self.text_preprocess(text)
             vendor, voice = self.voices[lang].split(':')
             logger.info("Lang {}, vendor {}, voice {}".format(lang, vendor, voice))
-            response = self.client.tts(text, vendor=vendor, voice=voice)
+            response = self.client.tts(text, vendor=vendor, voice=voice, emotion=self.emotion)
             self.executor.execute(response)
         except Exception as ex:
             import traceback
@@ -125,6 +127,12 @@ class TTSTalker:
         self.executor.lipsync_enabled = config.lipsync_enabled
         self.executor.lipsync_blender = config.lipsync_blender
         self.executor.enable_execute_marker(config.execute_marker)
+        self.emo_enabled = config.emo_enabled
+        if self.emo_enabled:
+            self.emotion = config.emotion
+        else:
+            self.emotion = None
+            logger.info("Set emotion {}".format(self.emotion))
         return config
 
 class TTSExecutor(object):
