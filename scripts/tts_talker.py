@@ -25,42 +25,31 @@ from ros_tts.cfg import TTSConfig
 
 logger = logging.getLogger('hr.tts.tts_talker')
 
-class FestivalTTSVisemes(BaseVisemes):
-    default_visemes_map = {
-        'A-I': ['aa','ae','ah','ao','ax','axr','ih','iy'],
-        'E': ['ay','eh','ey'],
-        'O': ['aw','ow','oy'],
-        'U': ['uh','uw'],
-        'C-D-G-K-N-S-TH': ['ch','dh','dx','g','h','jh','k','s','sh','th','y','z','zh','hh'],
-        'F-V': ['f','hv', 'v'],
-        'L': ['d','el','er','l','r','t'],
-        'M': ['b','em','en','m','n','nx','ng','p'],
-        'Q-W': ['w'],
-        'Sil': ['pau', 'brth']
-    }
-
 class TTSTalker:
-
-    LANGUAGES = ['en']
-
     def __init__(self):
         self.client = Client()
         self.executor = TTSExecutor()
 
         self.voices = {}
-        self.voices['en'] = 'festival:cmu_us_slt_arctic_hts'
+        self.voices['en'] = rospy.get_param('voice_en', None)
+        self.voices['zh'] = rospy.get_param('voice_zh', None)
+        for lang in ['en', 'zh']:
+            if self.voices[lang] is None:
+                logger.error("Voice for {} is not configured".format(lang))
+                sys.exit(1)
 
         self.service = rospy.Service('tts_length', TTSLength, self.tts_length)
 
         tts_topic = rospy.get_param('tts_topic', 'chatbot_responses')
         rospy.Subscriber(tts_topic, String, self.say)
         rospy.Subscriber(tts_topic+"_en", String, self.say, 'en')
+        rospy.Subscriber(tts_topic+"_zh", String, self.say, 'zh')
 
     def tts_length(self, req):
         text = req.txt
         lang = req.lang
         try:
-            if lang in self.LANGUAGES:
+            if lang in ['en', 'zh']:
                 vendor, voice = self.voices[lang].split(':')
                 response = self.client.tts(text, vendor=vendor, voice=voice)
                 duration = response.get_duration()
@@ -82,12 +71,46 @@ class TTSTalker:
             if lang is None:
                 logger.error("Language is not set")
                 return
-        if lang == 'en':
-            self._say(msg.data, lang)
+
+        text = msg.data
+
+        if lang == 'zh':
+            # cut the text by punctuations to avoid lengthy text
+            if isinstance(text, str):
+                try:
+                    text = text.decode('utf-8')
+                except Exception as ex:
+                    logger.error("Decode error {}, text {}".format(ex, text))
+                    return
+            pattern = ur'[。|，|！|？|、|.|,|!|?|\n]'
+            sentences = re.split(pattern, text)
+            for text in sentences:
+                text = text.strip()
+                if text:
+                    self._say(text.encode('utf-8'), lang)
+        elif lang == 'en':
+            self._say(text, lang)
 
         logger.info("Finished tts")
 
     def text_preprocess(self, text):
+        if not isinstance(text, unicode):
+            text = text.decode('utf-8')
+
+        # St. Patrick's Day => St Patrick's Day
+        text = re.sub(r'(?iu)([s]t\. )', 'St ', text)
+        # AI => Artificial Intelligence
+        text = re.sub(r'(?iu)(\ba\.?i\.?)\b', 'Artificial Intelligence', text)
+        # Hmm => <spurt />
+        text = re.sub(r'(?iu)(\bhmm*\b)', '<prosody rate="+100%"><spurt audio="g0001_015">hmm</spurt></prosody>', text)
+        # Er => <spurt />
+        text = re.sub(r'(?iu)(\berr*\b)', '<prosody rate="+50%"><spurt audio="g0001_017">er</spurt></prosody>', text)
+        # Ah
+        text = re.sub(r'(?iu)(\bahh*\b)', '<prosody rate="+50%"><spurt audio="g0001_025">ah</spurt></prosody>', text)
+
+        if isinstance(text, unicode):
+            text = text.encode('utf-8')
+
         return text
 
     def _say(self, text, lang):
@@ -97,6 +120,7 @@ class TTSTalker:
             if lang == 'en':
                 text = self.text_preprocess(text)
             vendor, voice = self.voices[lang].split(':')
+            logger.info("Lang {}, vendor {}, voice {}".format(lang, vendor, voice))
             response = self.client.tts(text, vendor=vendor, voice=voice)
             self.executor.execute(response)
         except Exception as ex:
@@ -116,9 +140,6 @@ class TTSExecutor(object):
         self._locker = threading.RLock()
         self.interrupt = threading.Event()
         self.sound = SoundFile()
-
-        self.viseme_configs = {}
-        self.viseme_configs['festival'] = FestivalTTSVisemes()
 
         self.lipsync_enabled = rospy.get_param('lipsync', True)
         self.lipsync_blender = rospy.get_param('lipsync_blender', True)
@@ -177,14 +198,7 @@ class TTSExecutor(object):
             logger.error("No sound file")
             return
 
-        vendor = response.params.get('vendor')
-        if vendor not in self.viseme_configs:
-            logger.error("No such viseme configs for vendor {}".format(vendor))
-            return
-
-        viseme_config = self.viseme_configs[vendor]
-
-        threading.Timer(0, self.sound.play, (wavfile,)).start()
+        threading.Timer(0.1, self.sound.play, (wavfile,)).start()
 
         duration = response.get_duration()
         self._startLipSync()
@@ -193,11 +207,32 @@ class TTSExecutor(object):
         phonemes = response.response['phonemes']
         markers = response.response['markers']
         words = response.response['words']
-        visemes = viseme_config.get_visemes(phonemes)
+        visemes = response.response['visemes']
 
         typeorder = {'marker': 1, 'word': 2, 'viseme': 3}
         nodes = markers+words+visemes
         nodes = sorted(nodes, key=lambda x: (x['start'], typeorder[x['type']]))
+
+        # Overwrite visemes during vocal gestures
+        in_gesture = False
+        vocal_gesture_nodes = []
+        for node in nodes:
+            if node['type'] == 'marker':
+                if node['name'] == 'CPRC_GESTURE_START':
+                    in_gesture = True
+                if node['name'] == 'CPRC_GESTURE_END':
+                    in_gesture = False
+            if node['type'] == 'viseme' and in_gesture:
+                vocal_gesture_nodes.append(node)
+        if len(vocal_gesture_nodes)>0:
+            if len(vocal_gesture_nodes) > 1:
+                mid = len(vocal_gesture_nodes)/2
+                for node in vocal_gesture_nodes[:mid]:
+                    node['name'] = 'A-I'
+                for node in vocal_gesture_nodes[mid:]:
+                    node['name'] = 'M'
+            else:
+                vocal_gesture_nodes[0]['name'] = 'A-I'
 
         start = time.time()
         end = start + duration + 1
