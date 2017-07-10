@@ -100,7 +100,7 @@ class TTSTalker:
         # St. Patrick's Day => St Patrick's Day
         text = re.sub(r'(?iu)([s]t\. )', 'St ', text)
         # AI => Artificial Intelligence
-        text = re.sub(r'(?iu)(\ba\.?i\.?)\b', 'Artificial Intelligence', text)
+        #text = re.sub(r'(?iu)(\ba\.?i\.?)\b', 'Artificial Intelligence', text)
         # Hmm => <spurt />
         text = re.sub(r'(?iu)(\bhmm*\b)', '<prosody rate="+100%"><spurt audio="g0001_015">hmm</spurt></prosody>', text)
         # Er => <spurt />
