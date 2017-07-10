@@ -127,7 +127,7 @@ class TTSTalker:
             if self.enable_peer_chatbot:
                 ip, topic = self.peer_chatbot_url.split(':')
                 text = text.replace("'", "\\'")
-                cmd = 'ssh {} rostopic pub -1 {} chatbot/ChatMessage \"{}\" 100 peer /'.format(ip, topic, text)
+                cmd = r'''ssh {} /home/hr/hansonrobotics/private_ws/devel/env.sh rostopic pub -1 {} chatbot/ChatMessage \"{}\" 100 peer /'''.format(ip, topic, text)
                 retcode = subprocess.call(cmd, shell=True)
                 logger.info("Run command: {}".format(cmd))
                 logger.info("Command return code {}".format(retcode))
