@@ -9,6 +9,7 @@ import re
 import logging
 import random
 import threading
+import subprocess
 from Queue import Queue
 
 from basic_head_api.msg import MakeFaceExpr
@@ -123,6 +124,13 @@ class TTSTalker:
             logger.info("Lang {}, vendor {}, voice {}".format(lang, vendor, voice))
             response = self.client.tts(text, vendor=vendor, voice=voice)
             self.executor.execute(response)
+            if self.enable_peer_chatbot:
+                ip, topic = self.peer_chatbot_url.split(':')
+                text = text.replace("'", "\\'")
+                cmd = 'ssh {} rostopic pub -1 {} chatbot/ChatMessage \"{}\" 100 peer /'.format(ip, topic, text)
+                retcode = subprocess.call(cmd, shell=True)
+                logger.info("Run command: {}".format(cmd))
+                logger.info("Command return code {}".format(retcode))
         except Exception as ex:
             import traceback
             logger.error('TTS error: {}'.format(traceback.format_exc()))
@@ -132,6 +140,8 @@ class TTSTalker:
         self.executor.lipsync_enabled = config.lipsync_enabled
         self.executor.lipsync_blender = config.lipsync_blender
         self.executor.enable_execute_marker(config.execute_marker)
+        self.enable_peer_chatbot = config.enable_peer_chatbot
+        self.peer_chatbot_url = config.peer_chatbot_url
         return config
 
 class TTSExecutor(object):
