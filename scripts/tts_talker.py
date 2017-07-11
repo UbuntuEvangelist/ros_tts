@@ -10,6 +10,7 @@ import logging
 import random
 import threading
 import subprocess
+import urllib
 from Queue import Queue
 
 from basic_head_api.msg import MakeFaceExpr
@@ -125,9 +126,10 @@ class TTSTalker:
             response = self.client.tts(text, vendor=vendor, voice=voice)
             self.executor.execute(response)
             if self.enable_peer_chatbot:
-                ip, topic = self.peer_chatbot_url.split(':')
+                curl_url = self.peer_chatbot_url
                 text = text.replace("'", "\\'")
-                cmd = r'''ssh {} /home/hr/hansonrobotics/private_ws/devel/env.sh rostopic pub -1 {} chatbot/ChatMessage \"{}\" 100 peer /'''.format(ip, topic, text)
+                text = urllib.quote(text)
+                cmd = r'''curl "{}/say/{}" '''.format(curl_url, text)
                 retcode = subprocess.call(cmd, shell=True)
                 logger.info("Run command: {}".format(cmd))
                 logger.info("Command return code {}".format(retcode))
