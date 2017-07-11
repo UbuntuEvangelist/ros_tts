@@ -96,16 +96,23 @@ class TTSTalker:
         logger.info("Finished tts")
 
     def text_preprocess(self, text):
+        if not isinstance(text, unicode):
+            text = text.decode('utf-8')
+
         # St. Patrick's Day => St Patrick's Day
-        text = re.sub(r'(?i)([s]t\. )', 'St ', text)
+        text = re.sub(r'(?iu)([s]t\. )', 'St ', text)
         # AI => Artificial Intelligence
-        text = re.sub(r'(?i)(\ba\.?i\.?)\b', 'Artificial Intelligence', text)
+        #text = re.sub(r'(?iu)(\ba\.?i\.?)\b', 'Artificial Intelligence', text)
         # Hmm => <spurt />
-        text = re.sub(r'(?i)(\bhmm*\b)', '<prosody rate="+100%"><spurt audio="g0001_015">hmm</spurt></prosody>', text)
+        text = re.sub(r'(?iu)(\bhmm*\b)', '<prosody rate="+100%"><spurt audio="g0001_015">hmm</spurt></prosody>', text)
         # Er => <spurt />
-        text = re.sub(r'(?i)(\berr*\b)', '<prosody rate="+50%"><spurt audio="g0001_017">er</spurt></prosody>', text)
+        text = re.sub(r'(?iu)(\berr*\b)', '<prosody rate="+50%"><spurt audio="g0001_017">er</spurt></prosody>', text)
         # Ah
-        text = re.sub(r'(?i)(\bahh*\b)', '<prosody rate="+50%"><spurt audio="g0001_025">ah</spurt></prosody>', text)
+        text = re.sub(r'(?iu)(\bahh*\b)', '<prosody rate="+50%"><spurt audio="g0001_025">ah</spurt></prosody>', text)
+
+        if isinstance(text, unicode):
+            text = text.encode('utf-8')
+
         return text
 
     def _say(self, text, lang):
