@@ -12,6 +12,7 @@ import threading
 import subprocess
 import urllib
 from Queue import Queue
+import xml.etree.ElementTree as ET
 
 from basic_head_api.msg import MakeFaceExpr
 from blender_api_msgs.msg import Viseme, SetGesture, EmotionState
@@ -127,8 +128,11 @@ class TTSTalker:
             self.executor.execute(response)
             if self.enable_peer_chatbot:
                 curl_url = self.peer_chatbot_url
-                text = text.replace("'", "\\'")
-                text = urllib.quote(text)
+                root = u'<_root_>{}</_root_>'.format(text)
+                tree = ET.fromstring(root.encode('utf-8'))
+                notags = ET.tostring(tree, encoding='utf8', method='text')
+                notags = notags.strip()
+                text = urllib.quote(notags, safe='')
                 cmd = r'''curl "{}/say/{}" '''.format(curl_url, text)
                 retcode = subprocess.call(cmd, shell=True)
                 logger.info("Run command: {}".format(cmd))
