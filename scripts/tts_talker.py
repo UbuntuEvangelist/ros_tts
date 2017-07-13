@@ -23,6 +23,7 @@ from dynamic_reconfigure.server import Server
 from ttsserver.sound_file import SoundFile
 from ttsserver.visemes import BaseVisemes
 from ttsserver.client import Client
+from ttsserver.espp.emotivespeech import DEFAULT_PARAMS, PRESET_EMO_PARAMS
 from ros_tts.srv import *
 from ros_tts.cfg import TTSConfig
 
@@ -33,7 +34,7 @@ class TTSTalker:
         self.client = Client()
         self.executor = TTSExecutor()
         self.emo_enabled = False
-        self.emotion = None
+        self.emotion_params = {}
 
         self.voices = {}
         self.voices['en'] = rospy.get_param('voice_en', None)
@@ -56,7 +57,7 @@ class TTSTalker:
         try:
             if lang in ['en', 'zh']:
                 vendor, voice = self.voices[lang].split(':')
-                response = self.client.tts(text, vendor=vendor, voice=voice, emotion=self.emotion)
+                response = self.client.tts(text, vendor=vendor, voice=voice, **self.emotion_params)
                 duration = response.get_duration()
                 if duration:
                     return TTSLengthResponse(duration)
@@ -126,7 +127,7 @@ class TTSTalker:
                 text = self.text_preprocess(text)
             vendor, voice = self.voices[lang].split(':')
             logger.info("Lang {}, vendor {}, voice {}".format(lang, vendor, voice))
-            response = self.client.tts(text, vendor=vendor, voice=voice, emotion=self.emotion)
+            response = self.client.tts(text, vendor=vendor, voice=voice, **self.emotion_params)
             self.executor.execute(response)
             if self.enable_peer_chatbot:
                 curl_url = self.peer_chatbot_url
@@ -150,10 +151,27 @@ class TTSTalker:
         self.executor.enable_execute_marker(config.execute_marker)
         self.emo_enabled = config.emo_enabled
         if self.emo_enabled:
-            self.emotion = config.emotion
+            emotion = getattr(config, 'emotion')
+            params = {}
+            params['emotion'] = emotion
+            for param in ["chunk_size", "semitones", "cutfreq",
+                "gain", "qfactor", "speed", "depth", "tempo", "intensity",
+                "parameter_control"]:
+                if hasattr(config, param):
+                    params[param] = getattr(config, param)
+            if self.emotion_params.get('emotion') != emotion:
+                # reset to default
+                params.update(DEFAULT_PARAMS)
+                params.update(PRESET_EMO_PARAMS[emotion])
+                for param in ["chunk_size", "semitones", "cutfreq",
+                    "gain", "qfactor", "speed", "depth", "tempo", "intensity",
+                    "parameter_control"]:
+                    if hasattr(config, param):
+                         setattr(config, param, params[param])
+            self.emotion_params.update(params)
+            logger.warn("Set emotion {}".format(self.emotion_params))
         else:
-            self.emotion = None
-            logger.info("Set emotion {}".format(self.emotion))
+            self.emotion_params = {}
         self.enable_peer_chatbot = config.enable_peer_chatbot
         self.peer_chatbot_url = config.peer_chatbot_url
         return config
