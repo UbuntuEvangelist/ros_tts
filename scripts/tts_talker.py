@@ -9,7 +9,10 @@ import re
 import logging
 import random
 import threading
+import subprocess
+import urllib
 from Queue import Queue
+import xml.etree.ElementTree as ET
 
 from basic_head_api.msg import MakeFaceExpr
 from blender_api_msgs.msg import Viseme, SetGesture, EmotionState
@@ -125,6 +128,17 @@ class TTSTalker:
             logger.info("Lang {}, vendor {}, voice {}".format(lang, vendor, voice))
             response = self.client.tts(text, vendor=vendor, voice=voice, emotion=self.emotion)
             self.executor.execute(response)
+            if self.enable_peer_chatbot:
+                curl_url = self.peer_chatbot_url
+                root = u'<_root_>{}</_root_>'.format(text)
+                tree = ET.fromstring(root.encode('utf-8'))
+                notags = ET.tostring(tree, encoding='utf8', method='text')
+                notags = notags.strip()
+                text = urllib.quote(notags, safe='')
+                cmd = r'''curl "{}/say/{}" '''.format(curl_url, text)
+                retcode = subprocess.call(cmd, shell=True)
+                logger.info("Run command: {}".format(cmd))
+                logger.info("Command return code {}".format(retcode))
         except Exception as ex:
             import traceback
             logger.error('TTS error: {}'.format(traceback.format_exc()))
@@ -140,6 +154,8 @@ class TTSTalker:
         else:
             self.emotion = None
             logger.info("Set emotion {}".format(self.emotion))
+        self.enable_peer_chatbot = config.enable_peer_chatbot
+        self.peer_chatbot_url = config.peer_chatbot_url
         return config
 
 class TTSExecutor(object):
