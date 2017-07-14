@@ -9,7 +9,10 @@ import re
 import logging
 import random
 import threading
+import subprocess
+import urllib
 from Queue import Queue
+import xml.etree.ElementTree as ET
 
 from basic_head_api.msg import MakeFaceExpr
 from blender_api_msgs.msg import Viseme, SetGesture, EmotionState
@@ -20,6 +23,7 @@ from dynamic_reconfigure.server import Server
 from ttsserver.sound_file import SoundFile
 from ttsserver.visemes import BaseVisemes
 from ttsserver.client import Client
+from ttsserver.espp.emotivespeech import DEFAULT_PARAMS, PRESET_EMO_PARAMS
 from ros_tts.srv import *
 from ros_tts.cfg import TTSConfig
 
@@ -29,6 +33,8 @@ class TTSTalker:
     def __init__(self):
         self.client = Client()
         self.executor = TTSExecutor()
+        self.emo_enabled = False
+        self.emotion_params = {}
 
         self.voices = {}
         self.voices['en'] = rospy.get_param('voice_en', None)
@@ -51,7 +57,7 @@ class TTSTalker:
         try:
             if lang in ['en', 'zh']:
                 vendor, voice = self.voices[lang].split(':')
-                response = self.client.tts(text, vendor=vendor, voice=voice)
+                response = self.client.tts(text, vendor=vendor, voice=voice, **self.emotion_params)
                 duration = response.get_duration()
                 if duration:
                     return TTSLengthResponse(duration)
@@ -100,7 +106,7 @@ class TTSTalker:
         # St. Patrick's Day => St Patrick's Day
         text = re.sub(r'(?iu)([s]t\. )', 'St ', text)
         # AI => Artificial Intelligence
-        text = re.sub(r'(?iu)(\ba\.?i\.?)\b', 'Artificial Intelligence', text)
+        #text = re.sub(r'(?iu)(\ba\.?i\.?)\b', 'Artificial Intelligence', text)
         # Hmm => <spurt />
         text = re.sub(r'(?iu)(\bhmm*\b)', '<prosody rate="+100%"><spurt audio="g0001_015">hmm</spurt></prosody>', text)
         # Er => <spurt />
@@ -121,8 +127,19 @@ class TTSTalker:
                 text = self.text_preprocess(text)
             vendor, voice = self.voices[lang].split(':')
             logger.info("Lang {}, vendor {}, voice {}".format(lang, vendor, voice))
-            response = self.client.tts(text, vendor=vendor, voice=voice)
+            response = self.client.tts(text, vendor=vendor, voice=voice, **self.emotion_params)
             self.executor.execute(response)
+            if self.enable_peer_chatbot:
+                curl_url = self.peer_chatbot_url
+                root = u'<_root_>{}</_root_>'.format(text)
+                tree = ET.fromstring(root.encode('utf-8'))
+                notags = ET.tostring(tree, encoding='utf8', method='text')
+                notags = notags.strip()
+                text = urllib.quote(notags, safe='')
+                cmd = r'''curl "{}/say/{}" '''.format(curl_url, text)
+                retcode = subprocess.call(cmd, shell=True)
+                logger.info("Run command: {}".format(cmd))
+                logger.info("Command return code {}".format(retcode))
         except Exception as ex:
             import traceback
             logger.error('TTS error: {}'.format(traceback.format_exc()))
@@ -132,6 +149,31 @@ class TTSTalker:
         self.executor.lipsync_enabled = config.lipsync_enabled
         self.executor.lipsync_blender = config.lipsync_blender
         self.executor.enable_execute_marker(config.execute_marker)
+        self.emo_enabled = config.emo_enabled
+        if self.emo_enabled:
+            emotion = getattr(config, 'emotion')
+            params = {}
+            params['emotion'] = emotion
+            for param in ["chunk_size", "semitones", "cutfreq",
+                "gain", "qfactor", "speed", "depth", "tempo", "intensity",
+                "parameter_control"]:
+                if hasattr(config, param):
+                    params[param] = getattr(config, param)
+            if self.emotion_params.get('emotion') != emotion:
+                # reset to default
+                params.update(DEFAULT_PARAMS)
+                params.update(PRESET_EMO_PARAMS[emotion])
+                for param in ["chunk_size", "semitones", "cutfreq",
+                    "gain", "qfactor", "speed", "depth", "tempo", "intensity",
+                    "parameter_control"]:
+                    if hasattr(config, param):
+                         setattr(config, param, params[param])
+            self.emotion_params.update(params)
+            logger.warn("Set emotion {}".format(self.emotion_params))
+        else:
+            self.emotion_params = {}
+        self.enable_peer_chatbot = config.enable_peer_chatbot
+        self.peer_chatbot_url = config.peer_chatbot_url
         return config
 
 class TTSExecutor(object):
