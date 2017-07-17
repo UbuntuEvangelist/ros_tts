@@ -130,6 +130,8 @@ class TTSTalker:
             response = self.client.tts(text, vendor=vendor, voice=voice, **self.emotion_params)
             self.executor.execute(response)
             if self.enable_peer_chatbot:
+                if not isinstance(text, unicode):
+                    text = text.decode('utf-8')
                 curl_url = self.peer_chatbot_url
                 root = u'<_root_>{}</_root_>'.format(text)
                 tree = ET.fromstring(root.encode('utf-8'))
