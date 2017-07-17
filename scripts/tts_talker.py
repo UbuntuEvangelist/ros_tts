@@ -138,7 +138,7 @@ class TTSTalker:
                 notags = ET.tostring(tree, encoding='utf8', method='text')
                 notags = notags.strip()
                 text = urllib.quote(notags, safe='')
-                cmd = r'''curl "{}/say/{}" '''.format(curl_url, text)
+                cmd = r'''curl -s "{}/say/{}" '''.format(curl_url, text)
                 retcode = subprocess.call(cmd, shell=True)
                 logger.info("Run command: {}".format(cmd))
                 logger.info("Command return code {}".format(retcode))
