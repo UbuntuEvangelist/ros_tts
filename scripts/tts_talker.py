@@ -13,6 +13,7 @@ import subprocess
 import urllib
 from Queue import Queue
 import xml.etree.ElementTree as ET
+import tempfile
 
 from basic_head_api.msg import MakeFaceExpr
 from blender_api_msgs.msg import Viseme, SetGesture, EmotionState
@@ -236,10 +237,11 @@ class TTSExecutor(object):
     @_threadsafe
     def execute(self, response):
         self.interrupt.clear()
-        wavfile = os.path.expanduser('~/.hr/tts/tmp.wav')
+        _, wavfile = tempfile.mkstemp(prefix='tts')
         success = response.write(wavfile)
         if not success:
             logger.error("No sound file")
+            os.remove(wavfile)
             return
 
         threading.Timer(0.1, self.sound.play, (wavfile,)).start()
@@ -315,6 +317,7 @@ class TTSExecutor(object):
 
         self.sendVisime({'name': 'Sil'})
         self._stopLipSync()
+        os.remove(wavfile)
 
     def sendVisime(self, visime):
         if self.lipsync_enabled and self.lipsync_blender and (visime['name'] != 'Sil'):
