@@ -14,6 +14,7 @@ import urllib
 from Queue import Queue
 import xml.etree.ElementTree as ET
 import tempfile
+import json
 
 from basic_head_api.msg import MakeFaceExpr
 from blender_api_msgs.msg import Viseme, SetGesture, EmotionState
@@ -36,6 +37,7 @@ class TTSTalker:
         self.executor = TTSExecutor()
         self.emo_enabled = False
         self.emotion_params = {}
+        self.tts_params = {}
 
         self.voices = {}
         self.voices['en'] = rospy.get_param('voice_en', None)
@@ -58,7 +60,10 @@ class TTSTalker:
         try:
             if lang in ['en', 'zh']:
                 vendor, voice = self.voices[lang].split(':')
-                response = self.client.tts(text, vendor=vendor, voice=voice, **self.emotion_params)
+                params = {}
+                params.update(self.emotion_params)
+                params.update(self.tts_params)
+                response = self.client.tts(text, vendor=vendor, voice=voice, **params)
                 duration = response.get_duration()
                 if duration:
                     return TTSLengthResponse(duration)
@@ -128,7 +133,10 @@ class TTSTalker:
                 text = self.text_preprocess(text)
             vendor, voice = self.voices[lang].split(':')
             logger.info("Lang {}, vendor {}, voice {}".format(lang, vendor, voice))
-            response = self.client.tts(text, vendor=vendor, voice=voice, **self.emotion_params)
+            params = {}
+            params.update(self.emotion_params)
+            params.update(self.tts_params)
+            response = self.client.tts(text, vendor=vendor, voice=voice, **params)
             self.executor.execute(response)
             if self.enable_peer_chatbot:
                 if not isinstance(text, unicode):
@@ -152,6 +160,19 @@ class TTSTalker:
         self.executor.lipsync_enabled = config.lipsync_enabled
         self.executor.lipsync_blender = config.lipsync_blender
         self.executor.enable_execute_marker(config.execute_marker)
+        self.tts_params_enabled = config.tts_params_enabled
+        if self.tts_params_enabled:
+            try:
+                tts_params = json.loads(config.tts_params_json)
+            except Exception as ex:
+                logger.error("Can't parse json {}".format(config.tts_params_json))
+                self.tts_params = {}
+            else:
+                self.tts_params.update(tts_params)
+                logger.info("TTS params {}".format(self.tts_params))
+        else:
+            self.tts_params = {}
+            config.tts_params_json = ''
         self.emo_enabled = config.emo_enabled
         if self.emo_enabled:
             emotion = getattr(config, 'emotion')
@@ -303,7 +324,7 @@ class TTSExecutor(object):
                 logger.info("word {}".format(node))
                 continue
             elif node['type'] == 'viseme':
-                logger.info("viseme {}".format(node))
+                logger.debug("viseme {}".format(node))
                 self.sendVisime(node)
 
         elapsed = time.time() - start
