@@ -38,17 +38,13 @@ class TTSTalker:
         self.emo_enabled = False
         self.emotion_params = {}
         self.tts_params = {}
-
-        self.voices = {}
-        self.voices['en'] = rospy.get_param('voice_en', None)
-        self.voices['zh'] = rospy.get_param('voice_zh', None)
-        for lang in ['en', 'zh']:
-            if self.voices[lang] is None:
-                logger.error("Voice for {} is not configured".format(lang))
-                sys.exit(1)
+        self.voices = rospy.get_param('voices', {})
+        if 'en' not in self.voices:
+            self.voices['en'] = rospy.get_param('voice_en', None)
+        if 'zh' not in self.voices:
+            self.voices['zh'] = rospy.get_param('voice_zh', None)
 
         self.service = rospy.Service('tts_length', TTSLength, self.tts_length)
-
         tts_topic = rospy.get_param('tts_topic', 'chatbot_responses')
         rospy.Subscriber(tts_topic, String, self.say)
         rospy.Subscriber(tts_topic+"_en", String, self.say, 'en')
@@ -58,7 +54,7 @@ class TTSTalker:
         text = req.txt
         lang = req.lang
         try:
-            if lang in ['en', 'zh']:
+            if lang in self.voices.keys():
                 vendor, voice = self.voices[lang].split(':')
                 params = {}
                 params.update(self.emotion_params)
