@@ -69,7 +69,7 @@ class TTSTalker:
             logger.warn("TTS is not enabled")
             return
 
-        text = msg.data
+        text = msg.text
         lang = msg.lang
 
         if lang == 'cmn-Hans-CN':
