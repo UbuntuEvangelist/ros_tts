@@ -18,6 +18,7 @@ import json
 
 from basic_head_api.msg import MakeFaceExpr
 from blender_api_msgs.msg import Viseme, SetGesture, EmotionState
+from hr_msgs.msg import TTS
 from std_msgs.msg import String
 from topic_tools.srv import MuxSelect
 from dynamic_reconfigure.server import Server
@@ -39,16 +40,10 @@ class TTSTalker:
         self.emotion_params = {}
         self.tts_params = {}
         self.voices = rospy.get_param('voices', {})
-        if 'en' not in self.voices:
-            self.voices['en'] = rospy.get_param('voice_en', None)
-        if 'zh' not in self.voices:
-            self.voices['zh'] = rospy.get_param('voice_zh', None)
 
         self.service = rospy.Service('tts_length', TTSLength, self.tts_length)
         tts_topic = rospy.get_param('tts_topic', 'chatbot_responses')
-        rospy.Subscriber(tts_topic, String, self.say)
-        rospy.Subscriber(tts_topic+"_en", String, self.say, 'en')
-        rospy.Subscriber(tts_topic+"_zh", String, self.say, 'zh')
+        rospy.Subscriber(tts_topic, TTS, self.say)
 
     def tts_length(self, req):
         text = req.txt
@@ -69,20 +64,15 @@ class TTSTalker:
             logger.error(ex)
         return TTSLengthResponse(1)
 
-    def say(self, msg, lang=None):
+    def say(self, msg):
         if not self.enable:
             logger.warn("TTS is not enabled")
             return
 
-        if lang is None:
-            lang = rospy.get_param('lang', None)
-            if lang is None:
-                logger.error("Language is not set")
-                return
-
         text = msg.data
+        lang = msg.lang
 
-        if lang == 'zh':
+        if lang == 'cmn-Hans-CN':
             # cut the text by punctuations to avoid lengthy text
             if isinstance(text, str):
                 try:
@@ -96,7 +86,7 @@ class TTSTalker:
                 text = text.strip()
                 if text:
                     self._say(text.encode('utf-8'), lang)
-        elif lang == 'en':
+        elif lang == 'en-US':
             self._say(text, lang)
 
         logger.info("Finished tts")
@@ -125,7 +115,7 @@ class TTSTalker:
         logger.info('Say "{}" in {}'.format(text, lang))
         try:
             text = text.strip().strip(".?!")
-            if lang == 'en':
+            if lang == 'en-US':
                 text = self.text_preprocess(text)
             vendor, voice = self.voices[lang].split(':')
             logger.info("Lang {}, vendor {}, voice {}".format(lang, vendor, voice))
