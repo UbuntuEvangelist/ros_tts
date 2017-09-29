@@ -86,7 +86,7 @@ class TTSTalker:
                 text = text.strip()
                 if text:
                     self._say(text.encode('utf-8'), lang)
-        elif lang == 'en-US':
+        else:
             self._say(text, lang)
 
         logger.info("Finished tts")
