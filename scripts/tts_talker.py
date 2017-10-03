@@ -15,6 +15,7 @@ from Queue import Queue
 import xml.etree.ElementTree as ET
 import tempfile
 import json
+import traceback
 
 from basic_head_api.msg import MakeFaceExpr
 from blender_api_msgs.msg import Viseme, SetGesture, EmotionState
@@ -138,7 +139,7 @@ class TTSTalker:
                 logger.info("Run command: {}".format(cmd))
                 logger.info("Command return code {}".format(retcode))
         except Exception as ex:
-            import traceback
+            logger.error(ex)
             logger.error('TTS error: {}'.format(traceback.format_exc()))
 
     def reconfig(self, config, level):
@@ -396,7 +397,6 @@ class AnimationRunner(threading.Thread):
                 else:
                     logger.warn("Unrecognized node {}".format(node))
             except Exception as ex:
-                import traceback
                 logger.error(ex)
                 logger.error(traceback.format_exc())
 
