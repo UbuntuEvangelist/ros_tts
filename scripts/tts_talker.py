@@ -146,6 +146,7 @@ class TTSTalker:
         self.enable = config.enable
         self.executor.lipsync_enabled = config.lipsync_enabled
         self.executor.lipsync_blender = config.lipsync_blender
+        self.executor.emo_lipsync = config.emo_lipsync
         self.executor.enable_execute_marker(config.execute_marker)
         self.tts_params_enabled = config.tts_params_enabled
         if self.tts_params_enabled:
@@ -196,6 +197,7 @@ class TTSExecutor(object):
 
         self.lipsync_enabled = rospy.get_param('lipsync', True)
         self.lipsync_blender = rospy.get_param('lipsync_blender', True)
+        self.emo_lipsync = rospy.get_param('emo_lipsync', False)
 
         tts_control = rospy.get_param('tts_control', 'tts_control')
         rospy.Subscriber(tts_control, String, self.tts_control)
@@ -203,6 +205,7 @@ class TTSExecutor(object):
         self.expr_topic = rospy.Publisher('make_face_expr', MakeFaceExpr, queue_size=0)
         self.vis_topic = rospy.Publisher('/blender_api/queue_viseme', Viseme, queue_size=0)
         self.mux = rospy.ServiceProxy('lips_pau_select', MuxSelect)
+        self.emo_mux = rospy.ServiceProxy('emo_pau_select', MuxSelect)
         self.blink_publisher = rospy.Publisher('chatbot_blink',String,queue_size=1)
 
         self.animation_queue = Queue()
@@ -222,6 +225,8 @@ class TTSExecutor(object):
         if self.lipsync_enabled and not self.lipsync_blender:
             try:
                 self.mux("lipsync_pau")
+                if not self.emo_lipsync:
+                    self.emo_mux("lipsync_pau")
             except Exception as ex:
                 logger.error(ex)
 
@@ -230,6 +235,8 @@ class TTSExecutor(object):
         if self.lipsync_enabled and not self.lipsync_blender:
             try:
                 self.mux("head_pau")
+                self.emo_mux("head_pau")
+
             except Exception as ex:
                 logger.error(ex)
 
