@@ -107,6 +107,11 @@ class TTSTalker:
         # Ah
         text = re.sub(r'(?iu)(\bahh*\b)', '<prosody rate="+50%"><spurt audio="g0001_025">ah</spurt></prosody>', text)
 
+	# SingularityNET
+        text = re.sub(r'(?iu)(\bSingularityNET\b)', 'Singularity Net', text)
+        text = re.sub(r'(?iu)(\bsingularitynet.io\b)', 'Singularity Net Dot I O', text)
+
+
         if isinstance(text, unicode):
             text = text.encode('utf-8')
 
