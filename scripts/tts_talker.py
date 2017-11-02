@@ -101,6 +101,10 @@ class TTSTalker:
         # AI => Artificial Intelligence
         #text = re.sub(r'(?iu)(\ba\.?i\.?)\b', 'Artificial Intelligence', text)
         # Hmm => <spurt />
+
+        # bugfix: remove 004 from text
+        text = re.sub(r'(?iu)(\b004*\b)','',text)
+
         text = re.sub(r'(?iu)(\bhmm*\b)', '<prosody rate="+100%"><spurt audio="g0001_015">hmm</spurt></prosody>', text)
         # Er => <spurt />
         text = re.sub(r'(?iu)(\berr*\b)', '<prosody rate="+50%"><spurt audio="g0001_017">er</spurt></prosody>', text)
